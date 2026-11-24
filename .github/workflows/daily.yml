@@ -1,0 +1,68 @@
+name: CyberWatch - Five Daily Security Intelligence Tasks
+
+on:
+  schedule:
+    - cron: '30 2 * * *'   # 8:00 AM IST - CVE discovery
+    - cron: '30 4 * * *'   # 10:00 AM IST - critical vulnerabilities
+    - cron: '30 6 * * *'   # 12:00 PM IST - CISA KEV
+    - cron: '30 9 * * *'   # 3:00 PM IST - ransomware watch
+    - cron: '30 14 * * *'  # 8:00 PM IST - daily digest
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Select a security intelligence task
+        required: true
+        type: choice
+        default: cve
+        options: [cve, critical, kev, ransomware, digest]
+
+permissions:
+  contents: write
+
+jobs:
+  security-intelligence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Select task
+        id: task
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+          MANUAL_TASK: ${{ inputs.task }}
+        run: |
+          if [ -n "$MANUAL_TASK" ]; then
+            TASK="$MANUAL_TASK"
+          else
+            case "$SCHEDULE" in
+              "30 2 * * *") TASK="cve" ;;
+              "30 4 * * *") TASK="critical" ;;
+              "30 6 * * *") TASK="kev" ;;
+              "30 9 * * *") TASK="ransomware" ;;
+              "30 14 * * *") TASK="digest" ;;
+              *) echo "Unknown schedule"; exit 1 ;;
+            esac
+          fi
+          echo "task=$TASK" >> "$GITHUB_OUTPUT"
+      - name: Generate report
+        run: python cyberwatch.py --task "${{ steps.task.outputs.task }}"
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+      - name: Commit report
+        run: |
+          git config user.name "Abhishek K"
+          git config user.email "abhi23kk@gmail.com"
+          git add reports/
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish CyberWatch ${{ steps.task.outputs.task }} intelligence"
+            git push
+          else
+            echo "No report changes to commit."
+          fi
